@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from mcp import Client
 
+from outlook_calendar_agent import agent_api
 from outlook_calendar_agent.mcp_server import build_server
 
 from .conftest import GOOGLE_EVENT_ID, FakeGoogleClient, google_event
@@ -25,8 +28,13 @@ def _call(server, name: str, **args):
     return asyncio.run(go())
 
 
+FIXED_NOW = datetime(2026, 10, 3, 9, 0, tzinfo=ZoneInfo("Asia/Singapore"))
+
+
 @pytest.fixture
-def server(grt):
+def server(grt, monkeypatch):
+    # The fixtures' events are in October 2026: a real clock would put them in the past.
+    monkeypatch.setattr(agent_api, "_now", lambda rt: FIXED_NOW)
     return build_server(rt_factory=lambda: grt)
 
 
@@ -456,3 +464,33 @@ def test_end_time_edge_cases(server) -> None:
         )
     )
     assert out.startswith("ERROR:") and "after the start" in out
+
+
+def test_several_drafts_confirm_as_one_batch(server, google: FakeGoogleClient) -> None:
+    """Three events asked for in one message are three drafts and one approval."""
+    ids = []
+    for subject, when in (("Standup", "2026-11-07T09:00"), ("Lunch", "2026-11-07T12:00")):
+        out = _text(
+            _call(server, "draft_create_event", subject=subject, when=when, duration_minutes=30)
+        )
+        ids.append(out.split("Draft saved as ")[1].split(".")[0])
+    assert google.write_calls == []
+
+    out = _text(_call(server, "confirm_draft", draft_id=f"{ids[0]}, d-000000", user_reply="yes"))
+    assert out.startswith("ERROR:") and "d-000000 not found" in out
+    assert google.write_calls == []  # an unknown id in the batch applies nothing
+
+    out = _text(_call(server, "confirm_draft", draft_id=", ".join(ids), user_reply="yes"))
+    lines = out.splitlines()
+    assert lines[0].startswith("1. Created: Standup") and lines[1].startswith("2. Created: Lunch")
+    assert [c.method for c in google.write_calls] == ["POST", "POST"]
+    assert "No pending drafts" in _text(_call(server, "list_drafts"))
+
+    out = _text(_call(server, "draft_create_event", subject="Gym", when="2026-11-08T18:00"))
+    first = out.split("Draft saved as ")[1].split(".")[0]
+    out = _text(_call(server, "draft_create_event", subject="Dinner", when="2026-11-08T20:00"))
+    second = out.split("Draft saved as ")[1].split(".")[0]
+    out = _text(_call(server, "discard_draft", draft_id=f"{first} {second}"))
+    assert out.startswith("2 drafts discarded")
+    assert "No pending drafts" in _text(_call(server, "list_drafts"))
+    assert len(google.write_calls) == 2

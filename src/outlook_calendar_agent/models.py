@@ -7,7 +7,7 @@ Draft models build the exact Graph payloads. They never set ``isOnlineMeeting``,
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, tzinfo
+from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -16,6 +16,7 @@ from .timeutil import (
     SGT,
     parse_google_datetime,
     parse_graph_datetime,
+    to_google_date,
     to_google_datetime,
     to_graph_datetime,
 )
@@ -301,6 +302,7 @@ class EventSnapshot(BaseModel):
     is_organizer: bool | None = None
     event_type: str | None = None
     change_key: str | None = None
+    is_all_day: bool = False
 
     @classmethod
     def from_event(cls, event: CalendarEvent, *, calendar_name: str | None = None) -> EventSnapshot:
@@ -357,6 +359,8 @@ class EventDraft(BaseModel):
     link: str | None = None  # meeting URL, stored in the description; never auto-generated
     reminder_minutes_before: int | None = DEFAULT_REMINDER_MINUTES  # None = calendar default
     duration_defaulted: bool = False  # True when the user gave no length and the default applied
+    # Whole days, no times: start is midnight on the first day, end midnight after the last.
+    all_day: bool = False
 
     @property
     def calendar_label(self) -> str:
@@ -375,6 +379,11 @@ class EventDraft(BaseModel):
     def description(self) -> str | None:
         return with_link(self.body, self.link)
 
+    @property
+    def last_day(self) -> date:
+        """The last day an all-day event covers (its end is the midnight after it)."""
+        return (self.end - timedelta(days=1)).date()
+
     @field_validator("link")
     @classmethod
     def _check_link(cls, value: str | None) -> str | None:
@@ -391,6 +400,8 @@ class EventDraft(BaseModel):
         _require_aware("end", self.end)
         if self.end <= self.start:
             raise ValueError("end must be after start")
+        if self.all_day and (self.start.time() != time.min or self.end.time() != time.min):
+            raise ValueError("an all-day event starts and ends at midnight")
         return self
 
     @property
@@ -403,6 +414,8 @@ class EventDraft(BaseModel):
             "start": to_graph_datetime(self.start, tz),
             "end": to_graph_datetime(self.end, tz),
         }
+        if self.all_day:
+            payload["isAllDay"] = True
         if self.description:
             payload["body"] = {"contentType": "text", "content": self.description}
         if self.location:
@@ -413,10 +426,11 @@ class EventDraft(BaseModel):
         return payload
 
     def to_google_payload(self, tz: tzinfo = SGT) -> dict[str, Any]:
+        stamp = to_google_date if self.all_day else to_google_datetime
         payload: dict[str, Any] = {
             "summary": self.subject,
-            "start": to_google_datetime(self.start, tz),
-            "end": to_google_datetime(self.end, tz),
+            "start": stamp(self.start, tz),
+            "end": stamp(self.end, tz),
         }
         if self.description:
             payload["description"] = self.description
@@ -549,8 +563,10 @@ class UpdateDraft(BaseModel):
         if "subject" in changed:
             patch["summary"] = self.subject
         if "start" in changed or "end" in changed:
-            patch["start"] = to_google_datetime(self.effective_start, tz)
-            patch["end"] = to_google_datetime(self.effective_end, tz)
+            # an all-day event stays all-day: its days move, it gains no times
+            stamp = to_google_date if self.original.is_all_day else to_google_datetime
+            patch["start"] = stamp(self.effective_start, tz)
+            patch["end"] = stamp(self.effective_end, tz)
         if "location" in changed:
             patch["location"] = self.location
         if "link" in changed:

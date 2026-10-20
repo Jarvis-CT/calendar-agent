@@ -12,6 +12,23 @@ from .models import Draft, DraftPayload
 from .storage import ensure_private_dir, write_private_text
 
 _DRAFT_ID_RE = re.compile(r"^d-[0-9a-f]{6}$")
+_ID_SEPARATOR_RE = re.compile(r"[\s,;]+")
+
+
+def draft_ids(text: str) -> list[str]:
+    """The draft ids named in ``text``: one, or several separated by commas or spaces.
+
+    Several ids make one batch, so a user who asked for five events in one message gives one
+    approval instead of five. Order is kept and repeats are dropped; any bad id fails the lot."""
+    ids: list[str] = []
+    for token in _ID_SEPARATOR_RE.split(text.strip()):
+        if token and not _DRAFT_ID_RE.match(token):
+            raise AgentError(f"Invalid draft ID {token!r}.", hint="Draft IDs look like d-1a2b3c.")
+        if token and token not in ids:
+            ids.append(token)
+    if not ids:
+        raise AgentError(f"Invalid draft ID {text!r}.", hint="Draft IDs look like d-1a2b3c.")
+    return ids
 
 
 class DraftStore:

@@ -29,6 +29,10 @@ Rules for callers:
   full stop) applies the draft; anything else discards it.
 - Never claim an event was created, moved or deleted unless confirm_draft returned "Created",
   "Updated" or "Deleted".
+- When one message from the user leads to several drafts (several events to add, move or
+  delete), make every draft first, show all the previews together, then apply them with ONE
+  confirm_draft call whose draft_id lists every id separated by commas ("d-1a2b3c, d-4d5e6f").
+  That gives the user one approval for the batch. Do not confirm them one at a time.
 """
 
 
@@ -102,6 +106,9 @@ def build_server(rt_factory=runtime.get_runtime) -> MCPServer:  # type: ignore[n
             "both and a 1 hour default is used and shown. attendees must be e-mail addresses; "
             "send_invitations=true e-mails them. link = a meeting URL the user gave. "
             "reminder_minutes_before: default 1440 (one day), 0 = none, -1 = calendar default. "
+            "An event without times ('all day', 'whole day', a trip over several days) is an "
+            "all-day event: pass all_day=true with when = the day or the days ('7 Nov', "
+            "'7 Nov to 19 Nov'), or when = first day and end = last day; no duration. "
             "Example: 'Monday lunch 12pm shaw centre' -> subject 'Lunch', when 'Monday 12pm', "
             "location 'Shaw Centre'. Returns a preview and a draft id."
         )
@@ -117,6 +124,7 @@ def build_server(rt_factory=runtime.get_runtime) -> MCPServer:  # type: ignore[n
         calendar: str = "",
         link: str = "",
         reminder_minutes_before: int = 1440,
+        all_day: bool = False,
     ) -> str:
         return agent_api.draft_create_event_text(
             rt(),
@@ -130,6 +138,7 @@ def build_server(rt_factory=runtime.get_runtime) -> MCPServer:  # type: ignore[n
             calendar=calendar,
             link=link,
             reminder_minutes_before=reminder_minutes_before,
+            all_day=all_day,
         )
 
     @server.tool(
@@ -141,8 +150,9 @@ def build_server(rt_factory=runtime.get_runtime) -> MCPServer:  # type: ignore[n
             "new_when = new start phrase (duration kept unless new_duration_minutes/new_end). "
             "new_link = a meeting URL to attach ('' removes it). new_reminder_minutes_before "
             "sets the reminder: minutes, 0 = none, -1 = calendar default. notify_attendees=true "
-            "e-mails attendees. 'on' may be a day or a range ('next week'). Returns a preview "
-            "and a draft id."
+            "e-mails attendees. 'on' may be a day or a range ('next week'). An all-day event "
+            "moves by day: new_when = '12 Nov' or '12 Nov to 14 Nov', new_end = its new last "
+            "day; it never gains times. Returns a preview and a draft id."
         )
     )
     def draft_update_event(
@@ -203,15 +213,23 @@ def build_server(rt_factory=runtime.get_runtime) -> MCPServer:  # type: ignore[n
 
     @server.tool(
         description=(
-            "Apply a draft. Pass the user's LITERAL reply as user_reply. The draft is applied only "
-            "if the reply is the single word 'yes' (any capitalisation); any other reply discards "
-            "it. Never pass 'yes' unless the user actually typed it or tapped a Yes button."
+            "Apply a draft, or a batch of drafts under one approval. draft_id is one draft id, "
+            "or several separated by commas ('d-1a2b3c, d-4d5e6f') when the user asked for "
+            "several changes in one message; the reply then has one line per draft. Pass the "
+            "user's LITERAL reply as user_reply. The drafts are applied only if the reply is "
+            "the single word 'yes' (any capitalisation); any other reply discards them. Never "
+            "pass 'yes' unless the user actually typed it or tapped a Yes button."
         )
     )
     def confirm_draft(draft_id: str, user_reply: str) -> str:
         return agent_api.confirm_draft_text(rt(), draft_id, user_reply)
 
-    @server.tool(description="Discard a pending draft without applying it.")
+    @server.tool(
+        description=(
+            "Discard pending drafts without applying them. draft_id is one id or several "
+            "separated by commas."
+        )
+    )
     def discard_draft(draft_id: str) -> str:
         return agent_api.discard_draft_text(rt(), draft_id)
 

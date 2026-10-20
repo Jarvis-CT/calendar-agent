@@ -50,6 +50,12 @@ _COMPACT_24H_RE = re.compile(
     r"\b(?P<h>[01]\d|2[0-3])(?P<m>[0-5]\d)\s*(?:hrs?|hours?|h)\b", re.IGNORECASE
 )
 _RANGE_SPLIT = re.compile(r"\s+(?:to|until|till|through|-)\s+|\s*[–—]\s*", re.IGNORECASE)
+# "7-19 nov": two day numbers joined by a hyphen, as people write a span. Not an ISO date.
+_DAY_SPAN_RE = re.compile(r"(?<![\d-])(\d{1,2})\s*-\s*(\d{1,2})(?=\s+[a-z])", re.IGNORECASE)
+# Words that make an event cover whole days rather than hours.
+_ALL_DAY_RE = re.compile(
+    r"\b(?:all|full|whole|entire)[ -]?day(?:\s+long)?\b|\ball-day\b|全天|整天", re.IGNORECASE
+)
 _MONTHS = (
     "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
     "sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
@@ -264,6 +270,48 @@ def resolve_moment(
     if at is None:
         raise DateAmbiguity(f"What time on {day:%A %d %b}? For example 10am or 15:30.")
     return datetime.combine(day, at, tz)
+
+
+def strip_all_day(text: str) -> tuple[str, bool]:
+    """Take an "all day" marker out of a phrase: ('7 nov', True) for '7 nov all day'."""
+    rest, found = _ALL_DAY_RE.subn(" ", text)
+    return re.sub(r"\s+", " ", rest).strip(" ,"), found > 0
+
+
+def resolve_days(text: str, *, now: datetime, tz: tzinfo = SGT) -> tuple[date, date] | None:
+    """Resolve a day or an inclusive span of days: '7 nov', '7 nov to 19 nov', '7-19 nov'.
+
+    Returns (first, last), or None when the phrase is not made of days only: a time in it
+    ("7 nov 2pm") means this is not a whole-day phrase. A span that ends before it starts raises
+    DateAmbiguity.
+    """
+    phrase = _DAY_SPAN_RE.sub(r"\1 to \2", _clean(text))
+    if not phrase or _first_time_token(phrase):
+        return None
+    parts = [p for p in _RANGE_SPLIT.split(phrase) if p]
+    if len(parts) == 2:
+        first = resolve_day(parts[0], now=now, tz=tz)
+        last = resolve_day(parts[1], now=now, tz=tz)
+        if (
+            first is None
+            and last is not None
+            and re.fullmatch(r"\d{1,2}(?:st|nd|rd|th)?", parts[0])
+        ):
+            # "7 to 19 nov": the first day borrows the month and year of the last
+            try:
+                first = last.replace(day=int(re.sub(r"\D", "", parts[0])))
+            except ValueError:
+                return None
+        if first is None or last is None:
+            return None
+        if last < first:
+            raise DateAmbiguity(
+                f"The span '{text}' ends ({last:%d %b}) before it starts ({first:%d %b}). "
+                "Which days do you mean?"
+            )
+        return first, last
+    day = resolve_day(phrase, now=now, tz=tz)
+    return (day, day) if day is not None else None
 
 
 def resolve_window(text: str, *, now: datetime, tz: tzinfo = SGT) -> Window:

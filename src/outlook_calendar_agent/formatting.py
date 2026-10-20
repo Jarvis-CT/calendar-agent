@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 from .models import (
@@ -178,22 +178,42 @@ def format_conflicts(conflicts: Sequence[CalendarEvent], tz: tzinfo = SGT) -> st
     return "\n".join(lines)
 
 
+def format_days(start: datetime, end: datetime, tz: tzinfo = SGT) -> str:
+    """'1 day' or '13 days' for an all-day span (end is the midnight after the last day)."""
+    days = max(1, (end.astimezone(tz).date() - start.astimezone(tz).date()).days)
+    return f"{days} day" + ("" if days == 1 else "s")
+
+
+def _all_day_label(moment: datetime, tz: tzinfo) -> str:
+    return f"{moment.astimezone(tz):%Y-%m-%d} (all day)"
+
+
 def format_create_preview(draft: EventDraft, tz: tzinfo = SGT) -> str:
+    if draft.all_day:
+        when = [
+            ("Start", _all_day_label(draft.start, tz)),
+            ("End", _all_day_label(draft.end - timedelta(days=1), tz)),
+            ("Duration", format_days(draft.start, draft.end, tz) + ", all day"),
+        ]
+    else:
+        when = [
+            ("Start", format_dt(draft.start, tz)),
+            ("End", format_dt(draft.end, tz)),
+            (
+                "Duration",
+                format_duration(int((draft.end - draft.start).total_seconds() // 60))
+                + (
+                    ' (default; reply e.g. "make it 2 hours" to change)'
+                    if draft.duration_defaulted
+                    else ""
+                ),
+            ),
+        ]
     rows = [
         ("Action", "CREATE event"),
         ("Event ID", "(assigned by the calendar provider on creation)"),
         ("Subject", draft.subject),
-        ("Start", format_dt(draft.start, tz)),
-        ("End", format_dt(draft.end, tz)),
-        (
-            "Duration",
-            format_duration(int((draft.end - draft.start).total_seconds() // 60))
-            + (
-                ' (default; reply e.g. "make it 2 hours" to change)'
-                if draft.duration_defaulted
-                else ""
-            ),
-        ),
+        *when,
         ("Calendar", draft.calendar_label),
         ("Location", draft.location or _NONE),
         ("Meeting link", draft.link or "(none — Meet/Teams links are not created by this tool)"),
@@ -216,6 +236,16 @@ def format_update_preview(draft: UpdateDraft, tz: tzinfo = SGT) -> str:
         return (label, f"{old}  ->  {new}   [CHANGED]")
 
     changed = set(draft.changed_fields())
+    if original.is_all_day:
+
+        def stamp(moment: datetime, *, is_end: bool = False) -> str:
+            return _all_day_label(moment - timedelta(days=int(is_end)), tz)
+
+    else:
+
+        def stamp(moment: datetime, *, is_end: bool = False) -> str:
+            return format_dt(moment, tz)
+
     rows = [
         (
             "Action",
@@ -225,13 +255,13 @@ def format_update_preview(draft: UpdateDraft, tz: tzinfo = SGT) -> str:
         change("Subject", original.subject, draft.subject if "subject" in changed else None),
         change(
             "Start",
-            format_dt(original.start, tz),
-            format_dt(draft.effective_start, tz) if "start" in changed else None,
+            stamp(original.start),
+            stamp(draft.effective_start) if "start" in changed else None,
         ),
         change(
             "End",
-            format_dt(original.end, tz),
-            format_dt(draft.effective_end, tz) if "end" in changed else None,
+            stamp(original.end, is_end=True),
+            stamp(draft.effective_end, is_end=True) if "end" in changed else None,
         ),
         ("Calendar", original.calendar_label),
         change(
