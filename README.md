@@ -37,7 +37,7 @@ It lives in `.env` (gitignored) and is never printed or logged.
 ## 2. Local setup
 
 ```bash
-cd ~/agents/outlook-calendar-agent
+cd ~/jarvis-ct/outlook-calendar-agent
 uv sync
 cp .env.example .env
 $EDITOR .env            # set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
