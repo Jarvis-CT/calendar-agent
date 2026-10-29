@@ -133,3 +133,54 @@ def test_review_edge_cases() -> None:
     )
     with pytest.raises(DateAmbiguity, match="not a valid time"):
         resolve_moment("tomorrow 25:00", now=NOW)
+
+
+# ---- times typed without a colon, and weekdays in front of dates ------------------------------
+@pytest.mark.parametrize(
+    ("phrase", "expected"),
+    [
+        ("Monday 430pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("coming monday 430pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("next Monday 430 pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("tomorrow 1130am", datetime(2026, 10, 4, 11, 30, tzinfo=SGT)),
+        ("tomorrow 1230pm", datetime(2026, 10, 4, 12, 30, tzinfo=SGT)),
+        ("monday at 930am", datetime(2026, 10, 5, 9, 30, tzinfo=SGT)),
+        ("5 oct 430pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("Monday 1630hrs", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("tomorrow 0900 hrs", datetime(2026, 10, 4, 9, 0, tzinfo=SGT)),
+        ("430pm", datetime(2026, 10, 3, 16, 30, tzinfo=SGT)),  # today
+        ("Monday 5 October 4:30pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("mon 5 oct 430pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("Sunday 2026-10-04 4pm", datetime(2026, 10, 4, 16, 0, tzinfo=SGT)),
+        # unchanged behaviour
+        ("Monday 4:30pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+        ("Monday 4.30pm", datetime(2026, 10, 5, 16, 30, tzinfo=SGT)),
+    ],
+)
+def test_compact_times_and_weekday_with_date(phrase: str, expected: datetime) -> None:
+    assert resolve_moment(phrase, now=NOW) == expected
+
+
+def test_a_weekday_that_contradicts_the_date_is_asked_about() -> None:
+    # 4 October 2026 is a Sunday: "Monday 4 October" must never quietly become either one.
+    with pytest.raises(DateAmbiguity, match="04 Oct 2026 is a Sunday, not a Monday"):
+        resolve_moment("Monday 4 October 4:30pm", now=NOW)
+    with pytest.raises(DateAmbiguity, match="08 Oct 2026 is a Thursday, not a Wednesday"):
+        resolve_moment("wed 8 oct 4pm", now=NOW)
+
+
+def test_an_unreadable_time_is_reported_as_the_time_not_the_day() -> None:
+    with pytest.raises(DateAmbiguity, match="could not read the time in 'Monday 1630'") as caught:
+        resolve_moment("Monday 1630", now=NOW)
+    assert "Monday 05 Oct" in caught.value.question
+    assert "tomorrow" not in caught.value.question
+    # a phrase whose day really is unclear still says so, without suggesting a specific day
+    with pytest.raises(DateAmbiguity, match="could not work out the day") as caught:
+        resolve_moment("sometime 3pm", now=NOW)
+    assert "tomorrow" not in caught.value.question
+
+
+@pytest.mark.parametrize("phrase", ["monday 2026pm", "monday 1375pm", "monday 2530hrs", "5 oct 99"])
+def test_doubtful_numbers_are_not_turned_into_times(phrase: str) -> None:
+    with pytest.raises(DateAmbiguity):
+        resolve_moment(phrase, now=NOW)

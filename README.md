@@ -37,7 +37,7 @@ It lives in `.env` (gitignored) and is never printed or logged.
 ## 2. Local setup
 
 ```bash
-cd ~/agents/outlook-calendar-agent
+cd ~/jarvis-ct/outlook-calendar-agent
 uv sync
 cp .env.example .env
 $EDITOR .env            # set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
@@ -171,6 +171,11 @@ another agent (the Telegram supervisor in `supervisor-agent`) can call the calen
 - Date and time arguments are the user's own phrases ("next Tuesday 2pm", "5 Oct to 9 Oct") and
   are resolved deterministically by `dates.py`; vague phrases come back as `QUESTION: ...`.
 - `draft_*` tools never write. They return the preview and a draft id.
+- An event without times is an all-day event: "full day 7 Nov", "7 Nov all day", a span such as
+  "7 Nov to 19 Nov" (or "7-19 Nov"), a first day with a last day as `end`, or `all_day=true`.
+  It is stored as dates, not times; conflicts are not checked for it; and `draft_update_event`
+  moves it by day ("12 Nov") without ever giving it a time. A bare day ("7 Nov") still asks
+  for the time, because it is more likely an appointment than a whole day.
 - `confirm_draft(draft_id, user_reply)` applies the draft only when `user_reply` is the single word `yes`
   and discards it otherwise, so the confirmation gate is enforced in this repo, not in any LLM.
 - Errors come back as `ERROR: ...` text so the calling model can relay them.

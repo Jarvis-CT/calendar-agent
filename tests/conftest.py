@@ -199,6 +199,10 @@ class FakeGoogleClient:
         )
         if self.post_handler:
             return self.post_handler(json)
+        if "date" in json["start"]:  # an all-day event comes back with dates, not times
+            created = google_event(event_id="NEW-ID", summary=json["summary"])
+            created["start"], created["end"] = dict(json["start"]), dict(json["end"])
+            return created
         return google_event(
             event_id="NEW-ID",
             summary=json["summary"],

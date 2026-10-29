@@ -106,6 +106,13 @@ def to_google_datetime(moment: datetime, tz: tzinfo = SGT) -> dict[str, str]:
     return {"dateTime": local.isoformat(timespec="seconds"), "timeZone": zone_name(tz)}
 
 
+def to_google_date(moment: datetime, tz: tzinfo = SGT) -> dict[str, str]:
+    """Build the all-day form of a Google ``EventDateTime``: the local date only."""
+    if moment.tzinfo is None:
+        raise ValueError("Internal error: naive datetime passed to to_google_date")
+    return {"date": moment.astimezone(tz).date().isoformat()}
+
+
 def parse_google_datetime(value: dict[str, str], tz: tzinfo = SGT) -> datetime:
     """Parse a Google ``EventDateTime``: ``dateTime`` (RFC 3339) or all-day ``date``."""
     if value.get("dateTime"):
